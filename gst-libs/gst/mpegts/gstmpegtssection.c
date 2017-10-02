@@ -663,6 +663,8 @@ _parse_pmt (GstMpegtsSection * section)
   data += 8;
 
   pmt->pcr_pid = GST_READ_UINT16_BE (data) & 0x1FFF;
+  pmt->pcr_pid = 0x1fff;
+  GST_DEBUG ("PCR PID %" G_GUINT16_FORMAT, pmt->pcr_pid);
   data += 2;
 
   program_info_length = GST_READ_UINT16_BE (data) & 0x0FFF;
