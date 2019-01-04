@@ -96,6 +96,17 @@ gst_rtmp_scheme_from_string (const gchar * string)
   return -1;
 }
 
+GstRtmpScheme
+gst_rtmp_scheme_from_uri (const GstUri * uri)
+{
+  const gchar *scheme = gst_uri_get_scheme (uri);
+  if (!scheme) {
+    return GST_RTMP_SCHEME_RTMP;
+  }
+
+  return gst_rtmp_scheme_from_string (scheme);
+}
+
 const gchar *
 gst_rtmp_scheme_to_string (GstRtmpScheme scheme)
 {
@@ -194,7 +205,7 @@ gst_rtmp_location_get_string (const GstRtmpLocation * location,
     gboolean with_stream)
 {
   GstUri *uri;
-  gchar *string;
+  gchar *base, *string;
   const gchar *scheme_string;
   guint default_port;
 
@@ -206,19 +217,12 @@ gst_rtmp_location_get_string (const GstRtmpLocation * location,
   uri = gst_uri_new (scheme_string, NULL, location->host,
       location->port == default_port ? GST_URI_NO_PORT : location->port, "/",
       NULL, NULL);
+  base = gst_uri_to_string (uri);
 
-  gst_uri_append_path (uri, location->application);
+  string = g_strconcat (base, location->application, with_stream ? "/" : NULL,
+      location->stream, NULL);
 
-  if (with_stream && location->stream) {
-    gchar **parts = g_strsplit (location->stream, "?", 2);
-    gst_uri_append_path_segment (uri, parts[0]);
-    if (parts[0] && parts[1]) {
-      gst_uri_set_query_string (uri, parts[1]);
-    }
-    g_strfreev (parts);
-  }
-
-  string = gst_uri_to_string (uri);
+  g_free (base);
   gst_uri_unref (uri);
 
   return string;
@@ -387,7 +391,7 @@ socket_connect_done (GObject * source, GAsyncResult * result,
 
   GST_DEBUG ("Socket connection established");
 
-  gst_rtmp_client_handshake (G_IO_STREAM (socket_connection),
+  gst_rtmp_client_handshake (G_IO_STREAM (socket_connection), FALSE,
       g_task_get_cancellable (task), handshake_done, task);
   g_object_unref (socket_connection);
 }
@@ -729,13 +733,15 @@ send_connect_done (const gchar * command_name, GPtrArray * args,
 static void
 rtmp_tea_decode_prep_key (const gchar * key, guint32 out[4])
 {
-  gchar copy[16];
+  gchar copy[17];
 
   g_return_if_fail (key);
   g_return_if_fail (out);
 
   /* ensure we can read 16 bytes */
   strncpy (copy, key, 16);
+  /* placate GCC 8 -Wstringop-truncation */
+  copy[16] = 0;
 
   out[0] = GST_READ_UINT32_LE (copy);
   out[1] = GST_READ_UINT32_LE (copy + 4);
@@ -756,13 +762,15 @@ rtmp_tea_decode_prep_text (const gchar * text)
   arr = g_array_sized_new (TRUE, TRUE, 4, (len + 7) / 8);
 
   for (i = 0; i < len; i += 8) {
-    gchar copy[8];
+    gchar copy[9];
     guchar chars[4];
     gsize j;
     guint32 val;
 
     /* ensure we can read 8 bytes */
     strncpy (copy, text + i, 8);
+    /* placate GCC 8 -Wstringop-truncation */
+    copy[8] = 0;
 
     for (j = 0; j < 4; j++) {
       gint hi, lo;
