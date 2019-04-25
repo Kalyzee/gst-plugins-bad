@@ -47,6 +47,14 @@ static void gst_amc_surface_src_base_init (gpointer g_class);
 
 static GstBaseSrcClass *parent_class = NULL;
 
+static void
+gst_amc_surface_src_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec);
+
+static void
+gst_amc_surface_src_get_property (GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec);
+
 GType
 gst_amc_surface_src_get_type (void)
 {
@@ -132,22 +140,6 @@ struct _BufferIdentification
 {
   guint64 timestamp;
 };
-/*
-static BufferIdentification *
-buffer_identification_new (GstClockTime timestamp)
-{
-  BufferIdentification *id = g_slice_new (BufferIdentification);
-
-  id->timestamp = timestamp;
-
-  return id;
-}
-
-static void
-buffer_identification_free (BufferIdentification * id)
-{
-  g_slice_free (BufferIdentification, id);
-} */
 
 static GstStateChangeReturn
 gst_amc_surface_src_change_state (GstElement * element,
@@ -164,16 +156,7 @@ static gboolean gst_amc_surface_src_open (GstAmcSurfaceSrc * encoder);
 static gboolean gst_amc_surface_src_close (GstAmcSurfaceSrc * encoder);
 static gboolean gst_amc_surface_src_start (GstAmcSurfaceSrc * encoder);
 static gboolean gst_amc_surface_src_stop (GstAmcSurfaceSrc * encoder);
-//static gboolean gst_amc_surface_src_set_format (GstAmcSurfaceSrc * encoder,
-//    GstVideoCodecState * state);
 static gboolean gst_amc_surface_src_flush (GstAmcSurfaceSrc * encoder);
-//static GstFlowReturn gst_amc_surface_src_handle_frame (GstAmcSurfaceSrc * encoder,
-//    GstVideoCodecFrame * frame);
-//static GstFlowReturn gst_amc_surface_src_finish (GstAmcSurfaceSrc * encoder);
-//
-//static GstFlowReturn gst_amc_surface_src_drain (GstAmcSurfaceSrc * self);
-
-static void gst_amc_surface_src_loop (GstAmcSurfaceSrc * self);
 
 #define MAX_FRAME_DIST_TIME  (5 * GST_SECOND)
 #define MAX_FRAME_DIST_FRAMES (100)
@@ -329,24 +312,6 @@ create_amc_format (GstAmcSurfaceSrc * self, GstStructure * s)
   if (err)
     GST_ELEMENT_WARNING_FROM_ERROR (self, err);
 
-  //self->format = videoformat;
-  /*if (!gst_amc_color_format_info_set (&self->color_format_info,
-     klass->codec_info, mime, color_format, width, height,
-     stride, slice_height, 0, 0, 0, 0))
-     goto color_format_info_failed_to_set;
-
-     GST_DEBUG_OBJECT (self,
-     "Color format info: {color_format=%d, width=%d, height=%d, "
-     "stride=%d, slice-height=%d, crop-left=%d, crop-top=%d, "
-     "crop-right=%d, crop-bottom=%d, frame-size=%d}",
-     self->color_format_info.color_format, self->color_format_info.width,
-     self->color_format_info.height, self->color_format_info.stride,
-     self->color_format_info.slice_height,
-     self->color_format_info.crop_left, self->color_format_info.crop_top,
-     self->color_format_info.crop_right,
-     self->color_format_info.crop_bottom,
-     self->color_format_info.frame_size); */
-
   return format;
 
 video_format_failed_to_convert:
@@ -459,12 +424,12 @@ gst_amc_surface_src_set_caps (GstBaseSrc * src, GstCaps * caps)
   self->width = width;
   self->height = height;
 
-  /*free_format = FALSE;
+  free_format = FALSE;
 
-     if (self->amc_format)
-     gst_amc_format_free (self->amc_format);
+  if (self->amc_format)
+    gst_amc_format_free (self->amc_format);
 
-     self->amc_format = format; */
+  self->amc_format = format;
 
 quit:
   if (allowed_caps)
@@ -510,13 +475,6 @@ gst_amc_surface_src_set_src_caps (GstAmcSurfaceSrc * self,
   } else {
     return ret;
   }
-
-  /*
-     if (ret) {
-     if (self->amc_format)
-     gst_amc_format_free (self->amc_format);
-     self->amc_format = format;
-     } */
 
   return ret;
 }
@@ -600,8 +558,8 @@ gst_amc_surface_src_init (GstAmcSurfaceSrc * self)
   g_mutex_init (&self->drain_lock);
   g_cond_init (&self->drain_cond);
 
-  self->bitrate = 4000000;      //BIT_RATE_DEFAULT;
-  self->i_frame_int = 2;        //I_FRAME_INTERVAL_DEFAULT;
+  self->bitrate = BIT_RATE_DEFAULT;
+  self->i_frame_int = I_FRAME_INTERVAL_DEFAULT;
   self->surface_jobject = NULL;
   self->headers = NULL;
   self->amc_format = NULL;
@@ -617,8 +575,8 @@ gst_amc_surface_src_class_init (GstAmcSurfaceSrcClass * klass)
   parent_class = g_type_class_peek_parent (klass);
   base_src_class->set_caps = gst_amc_surface_src_set_caps;
   base_src_class->create = gst_amc_surface_src_create;
-  //object_class->set_property = gst_image_src_bin_set_property;
-  //object_class->get_property = gst_image_src_bin_get_property;
+  object_class->set_property = gst_amc_surface_src_set_property;
+  object_class->get_property = gst_amc_surface_src_get_property;
   object_class->finalize = gst_amc_surface_src_finalize;
 
   element_class->change_state = gst_amc_surface_src_change_state;
@@ -650,7 +608,6 @@ gst_amc_surface_src_change_state (GstElement * element,
 {
   GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
   GstAmcSurfaceSrc *self = GST_AMC_SURFACE_SRC (element);
-  GError *gerr = NULL;
 
   switch (transition) {
     case GST_STATE_CHANGE_NULL_TO_READY:{
@@ -1046,7 +1003,6 @@ gst_amc_surface_src_stop (GstAmcSurfaceSrc * self)
       GST_ELEMENT_WARNING_FROM_ERROR (self, err);
     self->started = FALSE;
   }
-  //gst_pad_stop_task (GST_BASE_SRC_PAD (self));
 
   self->downstream_flow_ret = GST_FLOW_FLUSHING;
   self->drained = TRUE;
@@ -1211,4 +1167,64 @@ unsupported_level:
   gst_caps_unref (caps);
 
   return NULL;
+}
+
+static void
+gst_amc_surface_src_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec)
+{
+  GstAmcSurfaceSrc *self;
+  GstState state;
+
+  self = GST_AMC_SURFACE_SRC (object);
+
+  GST_OBJECT_LOCK (self);
+
+  state = GST_STATE (self);
+  if (state != GST_STATE_READY && state != GST_STATE_NULL)
+    goto wrong_state;
+
+  switch (prop_id) {
+    case PROP_BIT_RATE:
+      self->bitrate = g_value_get_uint (value);
+      break;
+    case PROP_I_FRAME_INTERVAL:
+      self->i_frame_int = g_value_get_uint (value);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+  }
+  GST_OBJECT_UNLOCK (self);
+  return;
+
+  /* ERROR */
+wrong_state:
+  {
+    GST_WARNING_OBJECT (self, "setting property in wrong state");
+    GST_OBJECT_UNLOCK (self);
+  }
+}
+
+static void
+gst_amc_surface_src_get_property (GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec)
+{
+  GstAmcSurfaceSrc *self;
+
+  self = GST_AMC_SURFACE_SRC (object);
+
+  GST_OBJECT_LOCK (self);
+  switch (prop_id) {
+    case PROP_BIT_RATE:
+      g_value_set_uint (value, self->bitrate);
+      break;
+    case PROP_I_FRAME_INTERVAL:
+      g_value_set_uint (value, self->i_frame_int);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (self, prop_id, pspec);
+      break;
+  }
+  GST_OBJECT_UNLOCK (self);
 }
