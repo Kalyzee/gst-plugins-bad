@@ -12,6 +12,7 @@ libgstandroidmedia_la_SOURCES = \
 	gst-android-graphics-imageformat.c \
 	gst-android-hardware-camera.c \
 	gst-android-hardware-sensor.c \
+	gstamcsurfacesrc.c \
 	gstjniutils.c
 
 noinst_HEADERS = \
@@ -28,6 +29,7 @@ noinst_HEADERS = \
 	gst-android-hardware-camera.h \
 	gst-android-hardware-sensor.h \
 	gstjniutils.h \
+	gstamcsurfacesrc.h \
 	gstsensors.h
 
 libgstandroidmedia_la_CFLAGS = \

@@ -88,6 +88,7 @@ GstAmcFormat * gst_amc_codec_get_output_format (GstAmcCodec * codec, GError **er
 
 gboolean gst_amc_codec_start (GstAmcCodec * codec, GError **err);
 gboolean gst_amc_codec_stop (GstAmcCodec * codec, GError **err);
+jobject gst_amc_codec_create_input_surface (GstAmcCodec * codec, GError **err);
 gboolean gst_amc_codec_flush (GstAmcCodec * codec, GError **err);
 gboolean gst_amc_codec_release (GstAmcCodec * codec, GError **err);
 

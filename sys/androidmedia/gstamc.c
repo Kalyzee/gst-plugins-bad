@@ -39,6 +39,7 @@
 #include "gstamcvideoenc.h"
 #include "gstamcaudiodec.h"
 #include "gstjniutils.h"
+#include "gstamcsurfacesrc.h"
 
 #include <gst/gst.h>
 #include <gst/video/video.h>
@@ -84,6 +85,7 @@ static struct
   jmethodID release_output_buffer;
   jmethodID start;
   jmethodID stop;
+  jmethodID create_input_surface;
 } media_codec;
 static struct
 {
@@ -283,6 +285,32 @@ gst_amc_codec_stop (GstAmcCodec * codec, GError ** err)
 
   return gst_amc_jni_call_void_method (env, err, codec->object,
       media_codec.stop);
+}
+
+jobject
+gst_amc_codec_create_input_surface (GstAmcCodec * codec, GError ** err)
+{
+  JNIEnv *env;
+  jobject ret = NULL;
+  jobject object = NULL;
+
+  g_return_val_if_fail (codec != NULL, NULL);
+
+  env = gst_amc_jni_get_env ();
+
+  if (!gst_amc_jni_call_object_method (env, err, codec->object,
+          media_codec.create_input_surface, &object))
+    goto done;
+
+  ret = gst_amc_jni_object_make_global (env, object);
+  if (!ret) {
+    gst_amc_jni_set_error (env, err, GST_LIBRARY_ERROR,
+        GST_LIBRARY_ERROR_SETTINGS, "Failed to create global format reference");
+  }
+
+done:
+
+  return ret;
 }
 
 gboolean
@@ -1154,6 +1182,9 @@ get_java_classes (void)
       (*env)->GetMethodID (env, media_codec.klass, "start", "()V");
   media_codec.stop =
       (*env)->GetMethodID (env, media_codec.klass, "stop", "()V");
+  media_codec.create_input_surface =
+      (*env)->GetMethodID (env, media_codec.klass, "createInputSurface",
+      "()Landroid/view/Surface;");
 
   if (!media_codec.configure ||
       !media_codec.create_by_codec_name ||
@@ -3175,14 +3206,16 @@ create_type_name (const gchar * parent_name, const gchar * codec_name)
 }
 
 static gchar *
-create_element_name (gboolean video, gboolean encoder, const gchar * codec_name)
+create_element_name (gboolean video, gboolean encoder, gboolean surface,
+    const gchar * codec_name)
 {
 #define PREFIX_LEN 10
   static const gchar *prefixes[] = {
     "amcviddec-",
     "amcauddec-",
     "amcvidenc-",
-    "amcaudenc-"
+    "amcsursrc-",
+    "amcaudenc-",
   };
   gchar *element_name;
   gint i, k;
@@ -3193,10 +3226,12 @@ create_element_name (gboolean video, gboolean encoder, const gchar * codec_name)
     prefix = prefixes[0];
   else if (!video && !encoder)
     prefix = prefixes[1];
-  else if (video && encoder)
+  else if (video && encoder && !surface)
     prefix = prefixes[2];
-  else
+  else if (video && encoder && surface)
     prefix = prefixes[3];
+  else
+    prefix = prefixes[4];
 
   element_name = g_new0 (gchar, PREFIX_LEN + strlen (codec_name) + 1);
   memcpy (element_name, prefix, PREFIX_LEN);
@@ -3246,15 +3281,18 @@ register_codecs (GstPlugin * plugin)
 
     for (i = 0; i < n_types; i++) {
       GTypeQuery type_query;
+      GTypeQuery srctype_query;
       GTypeInfo type_info = { 0, };
-      GType type, subtype;
-      gchar *type_name, *element_name;
+      GTypeInfo srctype_info = { 0, };
+      GType type, srctype, subtype, srcsubtype;
+      gchar *type_name, *srctype_name, *element_name, *srcelement_name;
       guint rank;
 
       if (is_video) {
-        if (codec_info->is_encoder)
+        if (codec_info->is_encoder) {
           type = gst_amc_video_enc_get_type ();
-        else
+          srctype = gst_amc_surface_src_get_type ();
+        } else
           type = gst_amc_video_dec_get_type ();
       } else if (is_audio && !codec_info->is_encoder) {
         type = gst_amc_audio_dec_get_type ();
@@ -3282,8 +3320,34 @@ register_codecs (GstPlugin * plugin)
       g_type_set_qdata (subtype, gst_amc_codec_info_quark, codec_info);
 
       element_name =
-          create_element_name (is_video, codec_info->is_encoder,
+          create_element_name (is_video, codec_info->is_encoder, FALSE,
           codec_info->name);
+
+      if (is_video && codec_info->is_encoder) {
+        g_type_query (srctype, &srctype_query);
+        memset (&srctype_info, 0, sizeof (srctype_info));
+        srctype_info.class_size = srctype_query.class_size;
+        srctype_info.instance_size = srctype_query.instance_size;
+        srctype_name =
+            create_type_name (srctype_query.type_name, codec_info->name);
+
+        if (g_type_from_name (srctype_name) != G_TYPE_INVALID) {
+          GST_ERROR ("Type '%s' already exists for codec '%s'", srctype_name,
+              codec_info->name);
+          g_free (srctype_name);
+          continue;
+        }
+
+        srcsubtype =
+            g_type_register_static (srctype, srctype_name, &srctype_info, 0);
+        g_free (srctype_name);
+
+        g_type_set_qdata (srcsubtype, gst_amc_codec_info_quark, codec_info);
+
+        srcelement_name =
+            create_element_name (is_video, codec_info->is_encoder, TRUE,
+            codec_info->name);
+      }
 
       /* Give the Google software codec a secondary rank,
        * everything else is likely a hardware codec, except
@@ -3322,6 +3386,11 @@ register_codecs (GstPlugin * plugin)
 
       ret |= gst_element_register (plugin, element_name, rank, subtype);
       g_free (element_name);
+
+      if (is_video && codec_info->is_encoder) {
+        ret |= gst_element_register (plugin, srcelement_name, rank, srcsubtype);
+        g_free (srcelement_name);
+      }
 
       is_video = FALSE;
     }
