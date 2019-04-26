@@ -165,9 +165,6 @@ static GstAmcFormat *
 create_amc_format (GstAmcSurfaceSrc * self, GstStructure * s)
 {
   GstAmcSurfaceSrcClass *klass;
-  gchar *name;
-  gchar *profile_string;
-  gchar *level_string;
   const gchar *mime = NULL;
   struct
   {
@@ -191,14 +188,12 @@ create_amc_format (GstAmcSurfaceSrc * self, GstStructure * s)
   gint fps_n = -1;
   gint fps_d = -1;
   GstVideoFormat videoformat;
-  gchar *videoformat_string;
-  gchar *structure_string;
+
+  const gchar *name = gst_structure_get_name (s);
+  const gchar *profile_string = gst_structure_get_string (s, "profile");
+  const gchar *level_string = gst_structure_get_string (s, "level");
 
   klass = GST_AMC_SURFACE_SRC_GET_CLASS (self);
-
-  name = gst_structure_get_name (s);
-  profile_string = gst_structure_get_string (s, "profile");
-  level_string = gst_structure_get_string (s, "level");
 
   if (!gst_structure_get_int (s, "width", &width))
     return FALSE;
@@ -206,10 +201,8 @@ create_amc_format (GstAmcSurfaceSrc * self, GstStructure * s)
     return FALSE;
   if (!gst_structure_get_fraction (s, "framerate", &fps_n, &fps_d))
     return FALSE;
-  if (!(videoformat_string = gst_structure_get_string (s, "format")))
-    videoformat_string = "NV21";        //settle for this if nothing is specified
 
-  videoformat = gst_video_format_from_string (videoformat_string);
+  videoformat = gst_video_format_from_string ("I420");
   if (videoformat == GST_VIDEO_FORMAT_UNKNOWN) {
     return FALSE;
   }
@@ -316,11 +309,6 @@ create_amc_format (GstAmcSurfaceSrc * self, GstStructure * s)
 
 video_format_failed_to_convert:
   GST_ERROR_OBJECT (self, "Failed to convert video format");
-  gst_amc_format_free (format);
-  return NULL;
-
-color_format_info_failed_to_set:
-  GST_ERROR_OBJECT (self, "Failed to set up GstAmcColorFormatInfo");
   gst_amc_format_free (format);
   return NULL;
 
@@ -445,9 +433,7 @@ static gboolean
 gst_amc_surface_src_set_src_caps (GstAmcSurfaceSrc * self,
     GstAmcFormat * format, gint fps_n, gint fps_d)
 {
-  GstBaseSrcClass *base_src_class = GST_BASE_SRC_CLASS (parent_class);
   GstCaps *caps;
-  gboolean ret;
 
   caps = caps_from_amc_format (format, fps_n, fps_d);
   if (!caps) {
@@ -455,28 +441,7 @@ gst_amc_surface_src_set_src_caps (GstAmcSurfaceSrc * self,
     return FALSE;
   }
 
-  /* It may not be proper to reference self->input_state here,
-   * because MediaCodec is an async model -- input_state may change multiple times,
-   * the passed-in MediaFormat may not be the one matched to the current input_state.
-   *
-   * Though, currently, the final src caps only calculate
-   * width/height/pixel-aspect-ratio/framerate/codec_data from self->input_state.
-   *
-   * If input width/height/codec_data change(is_format_change), it will restart
-   * MediaCodec, which means in these cases, self->input_state is matched.
-   */
-
-  ret = gst_base_src_set_caps (GST_BASE_SRC (self), caps);
-
-  if (ret) {
-    ret =
-        (GST_FLOW_ERROR != gst_pad_push_event (GST_BASE_SRC_PAD (self),
-            gst_event_new_caps (caps)));
-  } else {
-    return ret;
-  }
-
-  return ret;
+  return gst_base_src_set_caps (GST_BASE_SRC (self), caps);
 }
 
 static GstFlowReturn
@@ -528,7 +493,8 @@ gst_amc_surface_src_handle_output_frame (GstAmcSurfaceSrc * self,
   }
 
   if (buffer_info->size > 0) {
-    parent_class->alloc (self, buffer_info->offset, buffer_info->size, out_buf);
+    parent_class->alloc (GST_BASE_SRC (self), buffer_info->offset,
+        buffer_info->size, out_buf);
     gst_buffer_fill (*out_buf, 0, buf->data + buffer_info->offset,
         buffer_info->size);
 
@@ -548,7 +514,7 @@ gst_amc_surface_src_finalize (GObject * object)
   g_mutex_clear (&self->drain_lock);
   g_cond_clear (&self->drain_cond);
 
-  G_OBJECT_CLASS (parent_class)->finalize (self);
+  G_OBJECT_CLASS (parent_class)->finalize (G_OBJECT (self));
 }
 
 static void
@@ -730,7 +696,7 @@ retry:
 
       src_caps = gst_pad_get_current_caps (GST_BASE_SRC_PAD (self));
 
-      if (src_caps_struct = gst_caps_get_structure (src_caps, 0))
+      if ((src_caps_struct = gst_caps_get_structure (src_caps, 0)))
         gst_structure_get_fraction (src_caps_struct, "framerate", &fps_n,
             &fps_d);
 
@@ -976,8 +942,6 @@ gst_amc_surface_src_close (GstAmcSurfaceSrc * self)
 static gboolean
 gst_amc_surface_src_start (GstAmcSurfaceSrc * self)
 {
-  GError *err = NULL;
-
   self->last_upstream_ts = 0;
   self->drained = TRUE;
   self->downstream_flow_ret = GST_FLOW_OK;
